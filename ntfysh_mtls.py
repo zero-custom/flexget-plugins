@@ -9,21 +9,25 @@ from flexget.event import event
 from flexget.plugin import PluginWarning
 from flexget.utils.requests import Session as RequestSession
 
-plugin_name = 'ntfysh'
+plugin_name = 'ntfysh_mtls'
 
 requests = RequestSession(max_retries=3)
 
 
-class NtfyshNotifier:
-    """Send a Ntfy.sh notification.
+class NtfyshMtlsNotifier:
+    """Send a Ntfy.sh notification with mutual TLS support.
 
     Example::
 
         notify:
           entries:
             via:
-              - ntfysh:
+              - ntfysh_mtls:
+                  url: https://ntfy.example.com/
                   topic: <NTFY_TOPIC>
+                  client_cert: /certs/client.pem
+                  client_key: /certs/client-key.pem
+                  ca_cert: /certs/ca.pem
 
     Configuration parameters are also supported from entries (eg. through set).
     """
@@ -38,8 +42,16 @@ class NtfyshNotifier:
             'tags': {'type': 'string'},
             'username': {'type': 'string'},
             'password': {'type': 'string'},
+            'client_cert': {'type': 'string'},
+            'client_key': {'type': 'string'},
+            'ca_cert': {'type': 'string'},
+            'verify': {'type': 'boolean', 'default': True},
         },
         'required': ['topic', 'url'],
+        'dependentRequired': {
+            'client_key': ['client_cert'],
+            'client_cert': ['client_key'],
+        },
         'additionalProperties': False,
     }
 
@@ -63,14 +75,23 @@ class NtfyshNotifier:
         if 'tags' in config:
             req['params']['tags'] = config['tags']
 
+        # mTLS: client cert/key pair and CA override
+        request_kwargs = {}
+        if config.get('client_cert') and config.get('client_key'):
+            request_kwargs['cert'] = (config['client_cert'], config['client_key'])
+        if config.get('ca_cert'):
+            request_kwargs['verify'] = config['ca_cert']
+        elif 'verify' in config:
+            request_kwargs['verify'] = config['verify']
+
         try:
-            requests.post(**req)
+            requests.post(**req, **request_kwargs)
         except RequestException as e:
             if e.response is not None:
                 if e.response.status_code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
                     message = 'Invalid username and password'
                 else:
-                    message = e.response.text()
+                    message = e.response.text
             else:
                 message = str(e)
             raise PluginWarning(message)
@@ -78,4 +99,4 @@ class NtfyshNotifier:
 
 @event('plugin.register')
 def register_plugin():
-    plugin.register(NtfyshNotifier, plugin_name, api_ver=2, interfaces=['notifiers'])
+    plugin.register(NtfyshMtlsNotifier, plugin_name, api_ver=2, interfaces=['notifiers'])

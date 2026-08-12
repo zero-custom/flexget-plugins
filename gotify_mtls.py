@@ -8,23 +8,25 @@ from flexget.event import event
 from flexget.plugin import PluginWarning
 from flexget.utils.requests import Session as RequestSession
 
-plugin_name = 'gotify'
+plugin_name = 'gotify_mtls'
 
 requests = RequestSession(max_retries=3)
 
 
-class GotifyNotifier:
-    """Send a Gotify notification.
+class GotifyMtlsNotifier:
+    """Send a Gotify notification with mutual TLS support.
 
     Example::
 
         notify:
           entries:
             via:
-              - gotify:
-                  url: <GOTIFY_SERVER_URL>
+              - gotify_mtls:
+                  url: https://gotify.example.com
                   token: <GOTIFY_TOKEN>
-                  priority: <PRIORITY>
+                  client_cert: /certs/client.pem
+                  client_key: /certs/client-key.pem
+                  ca_cert: /certs/ca.pem
 
     Configuration parameters are also supported from entries (eg. through set).
     """
@@ -40,8 +42,16 @@ class GotifyNotifier:
                 'enum': ['text/plain', 'text/markdown'],
                 'default': 'text/plain',
             },
+            'client_cert': {'type': 'string'},
+            'client_key': {'type': 'string'},
+            'ca_cert': {'type': 'string'},
+            'verify': {'type': 'boolean', 'default': True},
         },
         'required': ['token', 'url'],
+        'dependentRequired': {
+            'client_key': ['client_cert'],
+            'client_cert': ['client_key'],
+        },
         'additionalProperties': False,
     }
 
@@ -61,9 +71,17 @@ class GotifyNotifier:
             'priority': priority,
             'extras': {'client::display': {'contentType': content_type}},
         }
-        # Make the request
+
+        request_kwargs = {}
+        if config.get('client_cert') and config.get('client_key'):
+            request_kwargs['cert'] = (config['client_cert'], config['client_key'])
+        if config.get('ca_cert'):
+            request_kwargs['verify'] = config['ca_cert']
+        elif 'verify' in config:
+            request_kwargs['verify'] = config['verify']
+
         try:
-            requests.post(url, params=params, json=notification)
+            requests.post(url, params=params, json=notification, **request_kwargs)
         except RequestException as e:
             if e.response is not None:
                 if e.response.status_code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
@@ -77,4 +95,4 @@ class GotifyNotifier:
 
 @event('plugin.register')
 def register_plugin():
-    plugin.register(GotifyNotifier, plugin_name, api_ver=2, interfaces=['notifiers'])
+    plugin.register(GotifyMtlsNotifier, plugin_name, api_ver=2, interfaces=['notifiers'])
